@@ -48,9 +48,19 @@ runs:
       shell: bash
       run: |
         cd cloned_hf_action_repo
-        uv pip install --system -r requirements.txt
+
+        # Create virtual environment
+        uv venv .venv
+
+        # Install dependencies into venv
+        . .venv/bin/activate
+        uv pip install -r requirements.txt
+
         cd ..
-        python cloned_hf_action_repo/sync_with_spaces.py \
+
+        # Run script using venv Python
+        cloned_hf_action_repo/.venv/bin/python \
+          cloned_hf_action_repo/sync_with_spaces.py \
           --repo_id "${{ inputs.huggingface_repo_id }}" \
           --directory "cloned_github_repo/${{ inputs.subdirectory }}" \
           --token "${{ inputs.hf_token }}" \
