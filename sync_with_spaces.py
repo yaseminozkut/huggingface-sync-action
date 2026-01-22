@@ -1,4 +1,6 @@
-from huggingface_hub import create_repo, upload_folder, whoami
+from huggingface_hub import create_repo, whoami, Repository
+import os
+import shutil
 
 
 def _to_bool(value):
@@ -7,6 +9,17 @@ def _to_bool(value):
     if isinstance(value, str):
         return value.lower() in {"1", "true", "yes", "y"}
     return False
+
+
+def _clear_repo_except_git(path: str):
+    for name in os.listdir(path):
+        if name == ".git":
+            continue
+        full = os.path.join(path, name)
+        if os.path.isdir(full):
+            shutil.rmtree(full)
+        else:
+            os.remove(full)
 
 
 def main(
@@ -39,15 +52,29 @@ def main(
     )
     print(f"\t- Repo URL: {url}")
 
-    commit_url = upload_folder(
-        folder_path=directory,
-        repo_id=repo_id,
+    repo = Repository(
+        local_dir="hf_repo",
+        clone_from=repo_id,
         repo_type=repo_type,
         token=token,
-        commit_message="Sync from GitHub via huggingface-sync-action",
-        ignore_patterns=["*.git*", "*.github*", "*README.md*"],
     )
-    print(f"\t- Repo synced: {commit_url}")
+
+    _clear_repo_except_git("hf_repo")
+
+    shutil.copytree(
+        directory,
+        "hf_repo",
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("*.git*", "*.github*", "*README.md*"),
+    )
+
+    if repo.is_dirty():
+        repo.push_to_hub(
+            commit_message="Sync from GitHub via huggingface-sync-action"
+        )
+        print("\t- Repo synced")
+    else:
+        print("\t- No changes detected, skipping commit")
 
 
 if __name__ == "__main__":
