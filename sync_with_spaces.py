@@ -1,4 +1,5 @@
-from huggingface_hub import create_repo, whoami, Repository
+from huggingface_hub import create_repo, whoami
+from huggingface_hub.repository import Repository
 import os
 import shutil
 
