@@ -1,7 +1,6 @@
 from huggingface_hub import create_repo, whoami, HfApi, CommitOperationAdd, CommitOperationDelete
 import os
 import fnmatch
-import hashlib
 
 
 def _to_bool(value):
@@ -19,15 +18,6 @@ def _is_ignored(path_in_repo: str, ignore_patterns: list[str]) -> bool:
         if fnmatch.fnmatch(path_in_repo, pat) or fnmatch.fnmatch(base, pat):
             return True
     return False
-
-
-def _compute_sha256(filepath: str) -> str:
-    """Compute SHA256 hash of a file."""
-    sha256 = hashlib.sha256()
-    with open(filepath, 'rb') as f:
-        while chunk := f.read(8192):
-            sha256.update(chunk)
-    return sha256.hexdigest()
 
 
 def _list_local_files(directory: str, ignore_patterns: list[str]) -> set[str]:
@@ -105,20 +95,6 @@ def main(
     remote_files = {p for p in remote_files_all if not _is_ignored(p, ignore_patterns)}
     print(f"\t- Remote files (after filtering): {len(remote_files)}")
 
-    # Get file info for remote files to check hashes
-    remote_file_info = {}
-    try:
-        repo_info = api.repo_info(repo_id=repo_id, repo_type=repo_type, files_metadata=True)
-        if repo_info.siblings:
-            for file_info in repo_info.siblings:
-                if file_info.rfilename in remote_files:
-                    # Store the LFS SHA256 or blob_id for comparison
-                    if hasattr(file_info, 'lfs') and file_info.lfs and hasattr(file_info.lfs, 'sha256'):
-                        remote_file_info[file_info.rfilename] = file_info.lfs.sha256
-    except Exception as e:
-        print(f"\t- Warning: Could not fetch remote file metadata: {e}")
-        # Continue without hash checking
-
     operations = []
 
     # Deletions: anything remote (not ignored) that no longer exists locally
@@ -129,32 +105,17 @@ def main(
             print(f"\t  - DELETE: {path}")
             operations.append(CommitOperationDelete(path_in_repo=path))
 
-    # Add/Update: only upload files that are new or have changed
-    files_to_add = []
-    files_skipped = 0
-    for path in sorted(local_files):
-        local_path = os.path.join(directory, path)
-        
-        # Check if file exists remotely and compare hash
-        if path in remote_file_info:
-            local_hash = _compute_sha256(local_path)
-            if local_hash == remote_file_info[path]:
-                # File is identical, skip it
-                files_skipped += 1
-                continue
-        
-        files_to_add.append(path)
-        operations.append(
-            CommitOperationAdd(
-                path_in_repo=path,
-                path_or_fileobj=local_path,
-            )
-        )
-
+    # Add/Update: only files that are new or don't exist remotely
+    files_to_add = local_files - remote_files
     if files_to_add:
-        print(f"\t- Files to add/update: {len(files_to_add)}")
-    if files_skipped > 0:
-        print(f"\t- Files skipped (unchanged): {files_skipped}")
+        print(f"\t- Files to add: {len(files_to_add)}")
+        for path in sorted(files_to_add):
+            operations.append(
+                CommitOperationAdd(
+                    path_in_repo=path,
+                    path_or_fileobj=os.path.join(directory, path),
+                )
+            )
 
     print(f"\t- Total operations: {len(operations)}")
 
