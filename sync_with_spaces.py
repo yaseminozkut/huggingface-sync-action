@@ -79,7 +79,7 @@ def main(
     )
     print(f"\t- Repo URL: {url}")
 
-    ignore_patterns = ["*.git*", "*.github*", "*README.md*"]
+    ignore_patterns = ["*.git*", "*.github*"]
 
     api = HfApi(token=token)
 
