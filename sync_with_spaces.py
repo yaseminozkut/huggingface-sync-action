@@ -1,6 +1,7 @@
 from huggingface_hub import create_repo, whoami, HfApi, CommitOperationAdd, CommitOperationDelete
 import os
 import fnmatch
+import hashlib
 
 
 def _to_bool(value):
@@ -47,6 +48,15 @@ def _list_local_files(directory: str, ignore_patterns: list[str]) -> set[str]:
             out.add(rel_file_norm)
 
     return out
+
+
+def _get_file_hash(filepath: str) -> str:
+    """Calculate SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 
 def main(
@@ -105,7 +115,7 @@ def main(
             print(f"\t  - DELETE: {path}")
             operations.append(CommitOperationDelete(path_in_repo=path))
 
-    # Add/Update: only files that are new or don't exist remotely
+    # Add new files: files that exist locally but not remotely
     files_to_add = local_files - remote_files
     if files_to_add:
         print(f"\t- Files to add: {len(files_to_add)}")
@@ -116,6 +126,52 @@ def main(
                     path_or_fileobj=os.path.join(directory, path),
                 )
             )
+
+    # Check for modified files: files that exist in both places
+    files_in_both = local_files & remote_files
+    if files_in_both:
+        print(f"\t- Checking {len(files_in_both)} existing files for changes...")
+        files_modified = []
+
+        for path in sorted(files_in_both):
+            local_path = os.path.join(directory, path)
+            local_hash = _get_file_hash(local_path)
+
+            # Download remote file and compare hash
+            try:
+                remote_content = api.hf_hub_download(
+                    repo_id=repo_id,
+                    repo_type=repo_type,
+                    filename=path,
+                    token=token,
+                )
+                remote_hash = _get_file_hash(remote_content)
+
+                if local_hash != remote_hash:
+                    files_modified.append(path)
+                    operations.append(
+                        CommitOperationAdd(
+                            path_in_repo=path,
+                            path_or_fileobj=local_path,
+                        )
+                    )
+            except Exception as e:
+                # If we can't download/compare, assume it needs updating
+                print(f"\t  - WARNING: Could not compare {path}, will update: {e}")
+                files_modified.append(path)
+                operations.append(
+                    CommitOperationAdd(
+                        path_in_repo=path,
+                        path_or_fileobj=local_path,
+                    )
+                )
+
+        if files_modified:
+            print(f"\t- Files modified: {len(files_modified)}")
+            for path in files_modified[:10]:  # Show first 10
+                print(f"\t  - UPDATE: {path}")
+            if len(files_modified) > 10:
+                print(f"\t  - ... and {len(files_modified) - 10} more")
 
     print(f"\t- Total operations: {len(operations)}")
 
